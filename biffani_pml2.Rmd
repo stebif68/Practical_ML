@@ -1,0 +1,209 @@
+---
+title: "Practical Machine Learning Project"
+author: "Stefano Biffani"
+date: "Tuesday, December 16, 2014"
+output: html_document
+---
+
+# Introduction
+
+Data for the present study were obtained from the Weight Lifting Exercises Dataset. Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+The objective of this project was to predict "how (well)" an activity was performed by the wearer based on a set of features recorded by sensors located on the belt, forearm, arm, and dumbell of the 6 participants.
+
+# Material and Methods
+
+```{r,step0,echo=FALSE,results='hide',warning=FALSE,message=FALSE}
+
+library(plyr)
+setInternet2(use = TRUE)
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",'train.csv')
+f1<-read.table('train.csv',
+               header=T,
+               sep=',',
+               dec='.',
+               na.strings = c("NA","","#DIV/0!"))
+
+
+# import training data
+#f1<-read.table("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+#               header=T,
+#               sep=',',
+#               dec='.',
+#               na.strings = c("NA","","#DIV/0!"))
+
+# working directory
+#dir <- 'C:\\Users\\biffanis\\Documents\\CORSI_ONLINE\\PracticalMachineLearning\\PROJECT'
+# import training data
+#f1<-read.table(file.path(dir,'pml-training.csv'),
+#               header=T,
+#               sep=',',
+#               dec='.',
+#               na.strings = c("NA","","#DIV/0!"))
+```
+
+```{r,step1, echo=FALSE,results='hide',warning=FALSE,message=FALSE}
+# drop first column
+f1.1<-f1[,-1]
+
+# look at missing value frequency
+
+## Count number of missing values
+nmissing <- function(x) sum(is.na(x))
+
+#colwise(nmissing)(d1)
+nvar<-ncol(f1.1)
+nmiss <- ddply(f1.1[,2:(nvar-1)], .(), colwise(nmissing))
+
+# subset new and no window 
+
+f1.new<-f1.1[f1.1$new_window=='yes',]
+f1.no<-f1.1[f1.1$new_window=='no',]
+# 
+# 
+# ## keep only new windows and statistics
+# 
+# new.miss<- ddply(f1.1, .(), colwise(nmissing)) # count missing/variable
+# new.miss<-new.miss[-1] # remove first field
+# f1.new0<-f1.new[names(new.miss)[new.miss!=0]] # keep variable with missing i.e.=statistics
+# cl<-f1.new[,c("classe")]
+# f1.new1<-cbind(f1.new0,cl)
+# ddply(f1.new1,.(), colwise(nmissing))
+# 
+## new_window=NO
+
+new.miss<- ddply(f1.1, .(), colwise(nmissing)) # count missing/variable
+new.miss<-new.miss[-1] # remove first field
+f1.no0<-f1.no[names(new.miss)[new.miss==0]]  # keep variable with missing i.e.=statistics
+f1.no1<-f1.no0[-c(2,3,4,5,6)]
+nv<-ncol(f1.no1)-2
+nc<-ncol(f1.no1)
+library(corrplot)
+M <- cor(f1.no1[c(-1,-nc)])
+#diag(M)<-NA
+minr<-round(min(M),digits=3)
+maxr<-round(max(M),digits=3)
+meanr<-round(mean(M),digits=3)
+
+#M.50<-M[M>0.5]
+#M.50 <- which(M>0.5,arr.ind=T)
+```
+
+
+The MLE dataset comprised `r nrow(f1)` record and `r ncol(f1)` variables. Some variables (n=`r table(nmiss>0)[[2]]`) had a large number of missing values. Those variables were statistics estimated from measures obtained within the same time-window and within the same participant. If the variable *new_window* had value =**yes**, the complete row was deleted.
+
+Eventually `r nv` variables were retained. Correlation between variables ranged from `r minr` to `r maxr` with an average of `r meanr`. A graphical visualitation of the correlations within variables can be observed in the following figure
+
+```{r, step2,echo=FALSE,results='hide',warning=FALSE,message=FALSE}
+corrplot(M, type = "upper",tl.pos = "n")
+#corrplot(M, method = "circle",cl.pos = "b", tl.pos = "d", tl.srt = 60)
+
+## Create train & testing
+set.seed(9999)
+library(caret)
+inTrain <- createDataPartition(y =f1.no1$classe,p = .80,list = FALSE)
+training <- f1.no1[ inTrain,]
+testing <- f1.no1[-inTrain,]
+
+```
+
+Data were divided into a training and a testing dataset (proportion 80/20).
+Training data was used to train 3 different algorithms which were used predict the *classe* variable. The 3 selected algorithms were:
+1. A Linear Discriminant Analysis with PCA pre-processing
+2. A Linear Discriminant Analysis without PCA pre-processing
+3. A boosting algorithm
+
+The 3 algorithms were selected based on data structure. Some predictors are highly correlated and reducing the number of predictors might be a good solution (method 1). Moreover **LDA** is a very powerful approach when the response variable is multi-class (method 2). On the other side a method which weight and add all the predictors (especially when these are weak) might be more useful than reducing the number of predictors (method 3). 
+
+As regards cross-validation, because of the data size and following what suggested by Kim (Estimating classification error rate: Repeated cross-validation, repeated hold-out and bootstrap, Computational Statistics & Data Analysis, Volume 53, Issue 11, 1 September 2009, Pages 3735–3745), a 10-fold CV scheme repeated 3 times was used.
+
+# Results - Training
+
+The percentage of the 5 different classes in the training dataset can be observed in the following figure.
+```{r,torta,echo=FALSE,results='hide',warning=FALSE,message=FALSE}
+
+pie<-data.frame((round(prop.table(table(training$classe)),digits=2)))
+pie$classe<-pie$Var1
+ggplot(pie, aes(x="", y=Freq, fill=classe)) + geom_bar(stat ="identity") +
+  geom_text(aes(y = Freq/2 + c(0, cumsum(Freq)[-length(Freq)]), label = paste(Freq,'%'))) + coord_polar(theta = "y") + ggtitle("Frequency of classe variable - training")
+
+#load('C:/Users/biffanis/Documents/cm_results.Rdata')
+```
+Class A (i.e., exercise correctly executed) is the most frequent, with nearly a 30 % frequency. 
+
+```{r, PCALDA,echo=FALSE,results='hide',warning=FALSE,message=FALSE}
+# PCA
+train.ss<-preProcess(training[-c(1,54)],method="pca",
+                     thresh=.95)
+pred<-predict(train.ss,training[-c(1,54)])
+ctrl <- trainControl(method = "repeatedcv",
+                     repeats = 3,
+                     classProbs = TRUE,
+                     verboseIter = FALSE)
+strt<-Sys.time()
+
+modelFit <- train(training$classe~.,
+                  method='lda',
+                  trControl=ctrl,
+                  data=pred)
+
+print(Sys.time()-strt)
+
+testPC <- predict(train.ss,testing[-c(1,54)])
+cm.PCA<-confusionMatrix(testing$classe,predict(modelFit,testPC))
+
+```
+
+```{r, LDA,echo=FALSE,results='hide',warning=FALSE,message=FALSE}
+# LDA
+modelFit2 <- train(training$classe~.,preProcess=c("center","scale"),
+                   method='lda',
+                   trControl=ctrl,
+                   data=training[-c(1,54)])
+testPC.lda <- predict(modelFit2,testing[-c(1,54)])
+cm.LDA<-confusionMatrix(testing$classe,testPC.lda)#predict(modelFit1,testPC.no))
+
+```
+
+```{r, boosting,echo=FALSE,results='hide',warning=FALSE,message=FALSE}
+# Scaling + boosting
+modelFit1 <- train(training$classe~.,preProcess=c("center","scale"),
+                   method='gbm',
+                   trControl=ctrl,
+                   data=training[-c(1,54)])
+testPC.no <- predict(modelFit1,testing[-c(1,54)])
+cm.GBM<-confusionMatrix(testing$classe,testPC.no)#predict(modelFit1,testPC.no))
+```
+
+The accuracy obtained by the CV process was `r cm.PCA$overall[[1]]`, `r cm.LDA$overall[[1]]` and `r cm.GBM$overall[[1]]` for the Linear Discriminant Analysis with PCA pre-processing, the Linear Discriminant Analysis without PCA pre-processing and the boosting algorithm, respectively.
+
+The latter algorithm showed the best results over all parameters
+```{r,CM}
+cm.GBM
+```
+
+```{r, TestingData,echo=FALSE,results='hide',warning=FALSE,message=FALSE}
+# # IMPORT TESTING
+# 
+# # import testing data
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",'testing.csv')
+
+ f1.t<-read.table('testing.csv',
+                header=T,
+                sep=',',
+                dec='.',
+                na.strings = c("NA","","#DIV/0!"))
+f1.t2<-f1.t[names(testing[-c(1,54)])]
+ 
+prediction.testing<-data.frame(X=f1.t$X,
+                               user_name=f1.t$user_name,
+                               pred_classe=predict(modelFit1,f1.t2))
+
+```
+
+# Testing
+
+Estimates obtained from boosting algorithm were used to predict 20 unknown records. Results are as follows:
+```{r,TestingData2, results='asis', echo=FALSE}
+  library(xtable)
+  print(xtable(prediction.testing),type='html')
+```
